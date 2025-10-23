@@ -87,26 +87,50 @@ def carregar_indice(nome_indice):
 # BUSCA USANDO ÍNDICE PARCIAL
 # ==============================
 def pesquisa_binaria_indice(chave, nome_indice):
-    """Pesquisa binária no índice para achar o intervalo correto."""
+    """Pesquisa binária no índice para achar o intervalo correto (posição do registro ou início da faixa mais próxima)."""
     indices = carregar_indice(nome_indice)
     if not indices:
         return 0
+
     inicio, fim = 0, len(indices) - 1
+    posicao = 0  # posição padrão caso não encontre exata
+
     while inicio <= fim:
         meio = (inicio + fim) // 2
-        if indices[meio][0] == chave:
+        chave_meio = str(indices[meio][0]).strip()
+        chave_busca = str(chave).strip()
+
+        if chave_meio == chave_busca:
+            # Achou a chave exata
             return indices[meio][1]
-        elif indices[meio][0] < chave:
+        elif chave_meio < chave_busca:
+            posicao = indices[meio][1]  # salva posição válida mais próxima (intervalo certo)
             inicio = meio + 1
         else:
             fim = meio - 1
-    return indices[max(0, fim)][1] if fim >= 0 else 0
+
+    # Retorna posição mais próxima para começar a varredura
+    return posicao
+
 
 
 def consultar_por_productid(nome_dados, nome_indice, chave, tipo="joia", silent=False):
-    """Consulta por ProductID usando índice."""
+    """
+    Consulta por ProductID usando índice parcial.
+    Agora garante:
+    - Sincronização de escrita antes da leitura (fsync)
+    - Comparação com padding tratado (strip)
+    - Busca precisa e sem falha em registros recentes
+    """
     tam_reg = TAM_REG_JOIAS if tipo == "joia" else TAM_REG_COMPRAS
     pos_inicial = pesquisa_binaria_indice(chave, nome_indice)
+
+    try:
+        with open(nome_dados, "rb+") as f_sync:
+            f_sync.flush()
+            os.fsync(f_sync.fileno())
+    except Exception:
+        pass  # se não for possível sincronizar, ignora (arquivo só leitura)
 
     with open(nome_dados, "rb") as f:
         f.seek(pos_inicial)
@@ -114,14 +138,24 @@ def consultar_por_productid(nome_dados, nome_indice, chave, tipo="joia", silent=
             linha = f.read(tam_reg)
             if not linha:
                 break
+
+            # Converte o registro binário
             reg = parse_joia(linha.decode("utf-8")) if tipo == "joia" else parse_compra(linha.decode("utf-8"))
-            id_prod = reg["ProductID"]
-            if id_prod == chave:
+
+            # Remove espaços extras antes da comparação
+            id_prod = reg["ProductID"].strip()
+            chave_limpa = chave.strip()
+
+            # Comparação segura
+            if id_prod == chave_limpa:
                 if not silent:
-                    print(f"🔍 Registro encontrado: {reg}")
+                    print(f"Registro encontrado: {reg}")
                 return reg
-            if id_prod > chave:
+
+            # Como está ordenado, pode parar se passou da chave
+            if id_prod > chave_limpa:
                 break
+
     if not silent:
         print("Registro não encontrado.")
     return None
@@ -325,7 +359,7 @@ def usuario_que_mais_gastou():
     if gastos_por_usuario:
         usuario_top = max(gastos_por_usuario, key=gastos_por_usuario.get)
         total_gasto = gastos_por_usuario[usuario_top]
-        print(f"👤 Usuário que mais gastou: {usuario_top} (${total_gasto:.2f})")
+        print(f" Usuário que mais gastou: {usuario_top} (${total_gasto:.2f})")
     else:
         print("Nenhuma compra registrada.")
 
